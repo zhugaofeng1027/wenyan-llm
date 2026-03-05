@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import inspect
 from pathlib import Path
 from typing import List, Optional
