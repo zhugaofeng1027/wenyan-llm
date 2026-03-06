@@ -39,18 +39,17 @@ def find_latest_checkpoint(output_dir: str) -> Optional[str]:
 
 
 def is_lora_adapter(path: str) -> bool:
-    p = Path(path)
-    return (p / "adapter_config.json").exists()
+    return (Path(path) / "adapter_config.json").exists()
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Test Wenyan model checkpoint/adapter by generation.")
+    parser = argparse.ArgumentParser(description="Interactive chatbot for base model + checkpoint.")
     parser.add_argument("--base_model", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--output_dir", type=str, default="outputs/qwen2.5-1.5b-instruct-wenyan-lora")
     parser.add_argument("--use_4bit", type=str2bool, default=True)
 
-    parser.add_argument("--prompt", type=str, default="请以文言文作五言绝句，题为《春夜》。")
+    parser.add_argument("--system_prompt", type=str, default="你是一位精通古文与诗词创作的助手。")
     parser.add_argument("--max_new_tokens", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=0.9)
@@ -79,7 +78,7 @@ def load_model_and_tokenizer(args: argparse.Namespace):
             bnb_4bit_use_double_quant=True,
         )
 
-    tokenizer_source = ckpt if Path(ckpt).joinpath("tokenizer_config.json").exists() else args.base_model
+    tokenizer_source = ckpt if (Path(ckpt) / "tokenizer_config.json").exists() else args.base_model
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -108,11 +107,27 @@ def load_model_and_tokenizer(args: argparse.Namespace):
     return model, tokenizer
 
 
-def main() -> None:
-    args = parse_args()
-    model, tokenizer = load_model_and_tokenizer(args)
+def build_prompt(tokenizer, messages):
+    if hasattr(tokenizer, "apply_chat_template"):
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    inputs = tokenizer(args.prompt, return_tensors="pt")
+    lines = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "system":
+            lines.append(f"[System]\n{content}")
+        elif role == "assistant":
+            lines.append(f"[Assistant]\n{content}")
+        else:
+            lines.append(f"[User]\n{content}")
+    lines.append("[Assistant]\n")
+    return "\n\n".join(lines)
+
+
+def generate_reply(model, tokenizer, messages, args: argparse.Namespace) -> str:
+    prompt_text = build_prompt(tokenizer, messages)
+    inputs = tokenizer(prompt_text, return_tensors="pt")
     inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
     with torch.no_grad():
@@ -128,17 +143,41 @@ def main() -> None:
         )
 
     input_len = inputs["input_ids"].shape[-1]
-    new_token_ids = outputs[0][input_len:]
-    new_token_count = int(new_token_ids.shape[-1])
-    full_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    new_text = tokenizer.decode(new_token_ids, skip_special_tokens=True)
-    print("\n===== Prompt =====")
-    print(args.prompt)
-    print(f"\n[INFO] generated new tokens: {new_token_count}")
-    print("\n===== New Output =====")
-    print(new_text if new_text.strip() else "<EMPTY>")
-    print("\n===== Output =====")
-    print(full_text)
+    new_tokens = outputs[0][input_len:]
+    answer = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+    return answer
+
+
+def main() -> None:
+    args = parse_args()
+    model, tokenizer = load_model_and_tokenizer(args)
+
+    messages = []
+    if args.system_prompt.strip():
+        messages.append({"role": "system", "content": args.system_prompt.strip()})
+
+    print("\n[INFO] Chat started. Commands: /exit, /quit, /reset")
+    while True:
+        user_input = input("\n你: ").strip()
+        if not user_input:
+            continue
+        if user_input.lower() in {"/exit", "/quit", "exit", "quit"}:
+            print("助手: 再会。")
+            break
+        if user_input.lower() == "/reset":
+            messages = []
+            if args.system_prompt.strip():
+                messages.append({"role": "system", "content": args.system_prompt.strip()})
+            print("[INFO] 已清空对话历史。")
+            continue
+
+        messages.append({"role": "user", "content": user_input})
+        answer = generate_reply(model, tokenizer, messages, args)
+        if not answer:
+            answer = "<EMPTY>"
+        print(f"助手: {answer}")
+        messages.append({"role": "assistant", "content": answer})
+
 
 if __name__ == "__main__":
     main()

@@ -92,7 +92,7 @@ def build_model_and_tokenizer(args: argparse.Namespace):
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
         quantization_config=quant_config,
-        torch_dtype=compute_dtype,
+        dtype=compute_dtype,
         device_map="auto",
         trust_remote_code=True,
     )
@@ -121,11 +121,11 @@ def build_model_and_tokenizer(args: argparse.Namespace):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SFT/QLoRA training for Classical Chinese model.")
-    parser.add_argument("--base_model", type=str, default="Qwen/Qwen2.5-1.5B")
+    parser.add_argument("--base_model", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--dataset_name", type=str, default="rick22630773/classical_chinese")
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--text_column", type=str, default=None)
-    parser.add_argument("--output_dir", type=str, default="outputs/qwen2.5-1.5b-wenyan-lora")
+    parser.add_argument("--output_dir", type=str, default="outputs/qwen2.5-1.5b-instruct-wenyan-lora")
 
     parser.add_argument("--max_seq_length", type=int, default=512)
     parser.add_argument("--learning_rate", type=float, default=2e-4)
@@ -253,7 +253,7 @@ def main() -> None:
         merge_dir = f"{args.output_dir}-merged"
         base_model = AutoModelForCausalLM.from_pretrained(
             args.base_model,
-            torch_dtype=torch.float16,
+            dtype=torch.float16,
             device_map="auto",
             trust_remote_code=True,
         )
